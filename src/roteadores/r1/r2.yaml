@@ -1,0 +1,8 @@
+virtual_ip: "10.5.2.1"
+udp_port: 6001
+
+neighbors:
+  -   virtual_ip: "10.5.1.1"
+      ip: "127.0.0.1"
+      port: 6000
+      cost: 3
