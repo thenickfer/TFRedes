@@ -49,22 +49,22 @@ class Neighbor:
 class Config:
     virtual_ip: str
     udp_port: int = DEFAULT_UDP_PORT
-    neighbors: list[Neighbor] = field(default_factory=list)
+    neighbors: dict[str, Neighbor] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "virtual_ip", _validate_ipv4(self.virtual_ip, "virtual_ip"))
         object.__setattr__(self, "udp_port", _validate_port(self.udp_port, "udp_port"))
 
 
-def _parse_neighbor(raw: Any, index: int) -> Neighbor:
+def _parse_neighbor(raw: Any, key: str) -> Neighbor:
     if not isinstance(raw, dict):
-        raise TypeError(f"'neighbors[{index}]' must be a mapping")
-    for required in ("ip", "udp_port", "cost"):
+        raise TypeError(f"'neighbors[{key}]' must be a mapping")
+    for required in ("ip", "port", "cost"):
         if required not in raw:
-            raise ValueError(f"'neighbors[{index}]' is missing required field '{required}'")
+            raise ValueError(f"'neighbors[{key}]' is missing required field '{required}'")
     return Neighbor(
         ip=raw["ip"],
-        udp_port=raw["udp_port"],
+        udp_port=raw["port"],
         cost=raw["cost"],
     )
 
@@ -85,13 +85,13 @@ def load_config(path: str | Path) -> Config:
 
     udp_port = data.get("udp_port", DEFAULT_UDP_PORT)
 
-    raw_neighbors = data.get("neighbors", [])
+    raw_neighbors = data.get("neighbors", {})
     if raw_neighbors is None:
-        raw_neighbors = []
-    if not isinstance(raw_neighbors, list):
-        raise TypeError("'neighbors' must be a list")
+        raw_neighbors = {}
+    if not isinstance(raw_neighbors, dict):
+        raise TypeError("'neighbors' must be a dict")
 
-    neighbors = [_parse_neighbor(item, idx) for idx, item in enumerate(raw_neighbors)]
+    neighbors = {key: _parse_neighbor(item, key) for key, item in raw_neighbors.items()}
 
     return Config(
         virtual_ip=data["virtual_ip"],

@@ -12,7 +12,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "config",
         nargs="?",
-        default="config.yaml",
+        default="r1.yaml",
         help="Path to the YAML configuration file (default: config.yaml)",
     )
     args = parser.parse_args(argv)
