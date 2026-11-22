@@ -45,10 +45,10 @@ class PacRoteavel(Pacote, ABC):
 
 
 @dataclass
-class PacDados(PacoteRoteavel):
+class PacDados(PacRoteavel):
     mensagem: str
 
 
 @dataclass
-class PacICMP(PacoteRoteavel):
+class PacICMP(PacRoteavel):
     tipo: TipoICMP | int
