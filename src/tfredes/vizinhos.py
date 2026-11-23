@@ -26,30 +26,58 @@ class GerenciadorVizinhos:
                 custo = vizinho_config.cost
             )
 
+    def endereco_eh_vizinho(self, endereco: tuple[str, int]) -> bool:
+        ip, porta = endereco
+        for vizinho in self.vizinhos.values():
+            if vizinho.ip == ip and vizinho.porta == porta:
+                return True
+        return False
+
+    def obter_vizinho_por_endereco_real(
+        self,
+        endereco: tuple[str, int]
+    ) -> EstadoVizinho | None:
+        ip, porta = endereco
+        for vizinho in self.vizinhos.values():
+            if vizinho.ip == ip and vizinho.porta == porta:
+                return vizinho
+        return None
+
     def processar_hello(
         self,
         endereco_virtual: str,
-        agora: float | None = None #se precisar testar usa um valor, se nao chama so com endereco
-    ) -> bool: #retorna true se o estado do vizinho mudou (ativo/inativo)
+        endereco_real: tuple[str, int] | None = None,
+        agora: float | None = None
+    ) -> bool:
         if agora is None:
             agora = time.monotonic()
 
-        vizinho = self.vizinhos.get(endereco_virtual)
-
-        # TODO: precisa ignorar se nao estiver configurado?
-        if vizinho is None:
-            return False
+        vizinho: EstadoVizinho | None = None
+        if endereco_real is not None:
+            vizinho = self.obter_vizinho_por_endereco_real(endereco_real)
+            if vizinho is None:
+                return False
+            # B3: associa endereço virtual -> (IP real, porta) do pacote recebido
+            if vizinho.endereco_virtual != endereco_virtual:
+                self.vizinhos.pop(vizinho.endereco_virtual, None)
+                vizinho.endereco_virtual = endereco_virtual
+                self.vizinhos[endereco_virtual] = vizinho
+            vizinho.ip, vizinho.porta = endereco_real
+        else:
+            vizinho = self.vizinhos.get(endereco_virtual)
+            if vizinho is None:
+                return False
 
         vizinho.ultimo_hello = agora
 
         if vizinho.ativo:
             return False
 
-        vizinho.ativo = True # Primeiro HELLO
+        vizinho.ativo = True
 
         self.logs.criaLog(
             "VIZINHOS",
-            f"Vizinho {endereco_virtual} ficou ativo."
+            f"Vizinho {endereco_virtual} ({vizinho.ip}:{vizinho.porta}) ficou ativo."
         )
 
         return True

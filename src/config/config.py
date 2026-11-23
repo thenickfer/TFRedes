@@ -25,11 +25,11 @@ def _validate_port(value: Any, field_name: str) -> int:
     return value
 
 
-def _validate_uint(value: Any, field_name: str) -> int:
+def _validate_positive_int(value: Any, field_name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
-        raise TypeError(f"'{field_name}' must be an unsigned integer")
-    if value < 0:
-        raise ValueError(f"'{field_name}' must be >= 0, got {value}")
+        raise TypeError(f"'{field_name}' must be a positive integer")
+    if value <= 0:
+        raise ValueError(f"'{field_name}' must be > 0, got {value}")
     return value
 
 
@@ -42,7 +42,7 @@ class Neighbor:
     def __post_init__(self) -> None:
         object.__setattr__(self, "ip", _validate_ipv4(self.ip, "neighbor.ip"))
         object.__setattr__(self, "udp_port", _validate_port(self.udp_port, "neighbor.udp_port"))
-        object.__setattr__(self, "cost", _validate_uint(self.cost, "neighbor.cost"))
+        object.__setattr__(self, "cost", _validate_positive_int(self.cost, "neighbor.cost"))
 
 
 @dataclass(frozen=True)

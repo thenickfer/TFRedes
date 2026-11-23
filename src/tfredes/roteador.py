@@ -146,10 +146,6 @@ class Roteador:
                 try:
                     addr = (viz.ip, viz.porta)
                     self.socket_udp.sendto(serializar_pacote(pacote), addr)
-                    self.logs.criaLog(
-                        "ENVIO",
-                        f"Pacote enviado para {virtual_ip} ({addr[0]}:{addr[1]})."
-                    )   
                 except Exception as e:
                     self.logs.criaLog(
                         "ERRO",
@@ -158,7 +154,7 @@ class Roteador:
             else:
                 self.logs.criaLog(
                     "ERRO",
-                    f"Vizinho {virtual_ip} não encontrado na lista de vizinhos ativos."
+                    f"Vizinho {virtual_ip} não encontrado na lista de vizinhos."
                 )
 
     def gerar_lsp_proprio(self) -> PacLSP:
@@ -204,41 +200,32 @@ class Roteador:
                 continue
 
     def processar_pacote(self, dados: bytes, endereco: tuple[str, int]) -> None:
+        # B6: descarta pacotes de (IP, porta) fora da lista de vizinhos
+        if not self.gerenciador_vizinhos.endereco_eh_vizinho(endereco):
+            return
+
         pacote = desserializar_pacote(dados)
 
         if pacote is None:
             self.logs.criaLog(
                 "ERRO",
-                f"Pacote inválido recebido de {endereco[0]}:{endereco[1]}"
+                f"Pacote malformado descartado de {endereco[0]}:{endereco[1]}."
             )
             return
 
         if isinstance(pacote, PacHello):
-            self.logs.criaLog(
-                "HELLO",
-                f"Hello recebido de {pacote.endereco_virtual} "
-                f"({endereco[0]}:{endereco[1]})."
-            )
-            if self.gerenciador_vizinhos.processar_hello(pacote.endereco_virtual):
+            if self.gerenciador_vizinhos.processar_hello(pacote.endereco_virtual, endereco):
                 self.gerar_novo_lsp()
                 for lsp in self.gerenciador_lsdb.obter_todos_lsps():
                     if lsp.origem != self.config.virtual_ip:
                         self.enviar_pacote(lsp, pacote.endereco_virtual)
 
         elif isinstance(pacote, PacLSP):
-            self.logs.criaLog(
-                "LSDB",
-                f"LSP recebido de {pacote.origem} com sequência {pacote.sequencia}."
-            )
             if self.gerenciador_lsdb.processar_lsp(pacote):
                 self.recalcular_tabela()
                 self.inundar_lsp(pacote, excluir_endereco=endereco)
+
         elif isinstance(pacote, PacRoteavel):
-            self.logs.criaLog(
-                "ROTEAVEL",
-                f"Pacote roteável recebido de {pacote.origem} "
-                f"com destino {pacote.destino}."
-            )
             resultado = self.encaminhador.processar_pacote_recebido(pacote)
             if resultado:
                 self.exec_acao(resultado)
@@ -249,25 +236,21 @@ class Roteador:
                 "DESCARTAR",
                 f"Pacote descartado. Observações: {resultado.observacoes}"
             )
-        elif resultado.acao in(
+        elif resultado.acao in (
             AcaoEncaminhamento.ICMP_GERADO,
             AcaoEncaminhamento.RESPOSTA_ECO,
-            ):
+        ):
             if isinstance(resultado.pacote, PacICMP):
-                res_envio = self.encaminhador.preparar_pacote_originado(resultado.pacote)
-                self.exec_acao(res_envio)
-                if res_envio.acao == AcaoEncaminhamento.ENCAMINHAR:
+                if resultado.acao == AcaoEncaminhamento.RESPOSTA_ECO:
                     self.logs.criaLog(
                         "ICMP",
-                        f"Mensagem ICMP({resultado.pacote.tipo}) enviada para {resultado.pacote.destino}."
+                        f"Mensagem ICMP tipo {int(resultado.pacote.tipo)} gerada para {resultado.pacote.destino}."
                     )
+                res_envio = self.encaminhador.preparar_pacote_originado(resultado.pacote)
+                self.exec_acao(res_envio)
         elif resultado.acao == AcaoEncaminhamento.ENCAMINHAR:
             if resultado.pacote and resultado.proximo_salto:
                 self.enviar_pacote(resultado.pacote, resultado.proximo_salto)
-                self.logs.criaLog(
-                    "ENCAMINHAR",
-                    f"Pacote encaminhado para {resultado.proximo_salto}."
-                )
         elif resultado.acao == AcaoEncaminhamento.RESULTADO_ICMP:
             if isinstance(resultado.pacote, PacICMP):
                 pkg = resultado.pacote

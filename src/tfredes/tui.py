@@ -7,10 +7,11 @@ from rich.table import Table
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.containers import Horizontal
 from textual.events import Key
 from textual.widgets import DataTable, Footer, Header, Input, RichLog, TabbedContent, TabPane
 
-from tfredes.pacotes import PacDados, PacICMP, TipoICMP
+from tfredes.pacotes import PacDados, PacICMP, TipoICMP, eh_ipv4_valido
 from tfredes.trata_pacotes import AcaoEncaminhamento
 
 if TYPE_CHECKING:
@@ -18,17 +19,13 @@ if TYPE_CHECKING:
 
 
 class RoteadorApp(App[None]):
-    """
-    Aplicativo TUI para monitorar e interagir com um roteador.
-    Desculpa sor, gerei com IA, mas ficou MUITO mais bonito que o que eu faria manualmente (se for descontar, eu sou o Nícolas)
-    """
     CSS = """
     Screen {
         layout: vertical;
     }
 
     #painel-estado {
-        height: 12;
+        height: 11;
         min-height: 9;
         border: round $primary;
     }
@@ -37,9 +34,21 @@ class RoteadorApp(App[None]):
         height: 1fr;
     }
 
+    #area-central {
+        height: 1fr;
+    }
+
     #console {
+        width: 1fr;
         height: 1fr;
         border: round $secondary;
+        padding: 0 1;
+    }
+
+    #painel-logs {
+        width: 1fr;
+        height: 1fr;
+        border: round $accent;
         padding: 0 1;
     }
 
@@ -74,7 +83,14 @@ class RoteadorApp(App[None]):
                 yield DataTable(id="dt-vizinhos", zebra_stripes=True)
             with TabPane("LSDB [F3]", id="tab-lsdb"):
                 yield DataTable(id="dt-lsdb", zebra_stripes=True)
-        yield RichLog(id="console", highlight=True, markup=True, wrap=True)
+        with Horizontal(id="area-central"):
+            console = RichLog(id="console", highlight=True, markup=True, wrap=True)
+            console.border_title = "Console & Mensagens"
+            yield console
+
+            painel_logs = RichLog(id="painel-logs", highlight=True, markup=False, wrap=True)
+            painel_logs.border_title = "Logs em Tempo Real"
+            yield painel_logs
         yield Input(
             placeholder="Comandos: tabela | lsdb | vizinhos | msg <destino> <texto> | ping <destino> [TTL] | ajuda | sair",
             id="entrada-comando",
@@ -93,6 +109,7 @@ class RoteadorApp(App[None]):
 
         self.roteador.on_mensagem_recebida = self._ao_receber_mensagem
         self.roteador.on_estado_alterado = self.atualizar_paineis
+        self.roteador.logs.on_log = self._ao_registrar_log
 
         self.atualizar_paineis()
         self.set_interval(2.0, self.atualizar_paineis)
@@ -108,9 +125,15 @@ class RoteadorApp(App[None]):
     def on_unmount(self) -> None:
         self.roteador.on_mensagem_recebida = None
         self.roteador.on_estado_alterado = None
+        self.roteador.logs.on_log = None
 
     def _hora(self) -> str:
         return datetime.now().strftime("%H:%M:%S")
+
+    def _ao_registrar_log(self, linha: str) -> None:
+        if not self.is_mounted:
+            return
+        self.query_one("#painel-logs", RichLog).write(linha)
 
     def atualizar_paineis(self) -> None:
         if not self.is_mounted:
@@ -148,7 +171,7 @@ class RoteadorApp(App[None]):
             key=lambda lsp: lsp.origem,
         )
         for lsp in lsps:
-            viz_str = ", ".join(
+            viz_str = ";".join(
                 f"{v}={c}" for v, c in sorted(lsp.vizinhos.items())
             ) or "(sem vizinhos ativos)"
             dt_lsdb.add_row(lsp.origem, str(lsp.sequencia), viz_str)
@@ -232,6 +255,9 @@ class RoteadorApp(App[None]):
                 console.write("[yellow]Uso: ping <destino> [TTL][/yellow]")
             else:
                 destino = args_ping[1]
+                if not eh_ipv4_valido(destino):
+                    console.write(f"[red]Endereço de destino inválido:[/red] {destino}")
+                    return
                 ttl = 16
                 if len(args_ping) == 3:
                     try:
@@ -259,7 +285,7 @@ class RoteadorApp(App[None]):
         tabela.add_row("tabela", "Exibe a tabela de roteamento (rede, próximo salto, custo)")
         tabela.add_row("lsdb", "Exibe a LSDB (origem, sequência, vizinhos e custos)")
         tabela.add_row("vizinhos", "Exibe os vizinhos ativos (endereço virtual, IP real e porta)")
-        tabela.add_row("msg <destino> <texto>", "Envia um pacote de dados")
+        tabela.add_row("msg <destino> <texto>", "Envia um pacote de dados (ASCII, sem ':')")
         tabela.add_row("ping <destino> [TTL]", "Envia pedido de eco (TTL padrão: 16, timeout: 2s)")
         tabela.add_row("limpar / sair", "Limpa o console / encerra o roteador")
         console.write(tabela)
@@ -297,8 +323,8 @@ class RoteadorApp(App[None]):
         tabela.add_column("Sequência", justify="right")
         tabela.add_column("Vizinhos e Custos")
         for lsp in lsps:
-            viz_str = ", ".join(
-                f"{v} (custo {c})" for v, c in sorted(lsp.vizinhos.items())
+            viz_str = ";".join(
+                f"{v}={c}" for v, c in sorted(lsp.vizinhos.items())
             ) or "(nenhum)"
             tabela.add_row(lsp.origem, str(lsp.sequencia), viz_str)
         console.write(tabela)
@@ -323,6 +349,16 @@ class RoteadorApp(App[None]):
 
     def _cmd_msg(self, destino: str, texto: str) -> None:
         console = self.query_one("#console", RichLog)
+        if not eh_ipv4_valido(destino):
+            console.write(f"[red]Endereço de destino inválido:[/red] {destino}")
+            return
+        if ":" in texto:
+            console.write("[red]Mensagem inválida:[/red] o texto não pode conter o caractere ':'.")
+            return
+        if not texto.isascii():
+            console.write("[red]Mensagem inválida:[/red] o texto deve conter apenas caracteres ASCII.")
+            return
+
         res = self.roteador.enviar_dados(destino, texto)
 
         if res.acao == AcaoEncaminhamento.ENCAMINHAR:
