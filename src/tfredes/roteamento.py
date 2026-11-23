@@ -7,6 +7,7 @@ from logs import Logs
 
 
 class GerenciadorRoteamento:
+    #Nao trata os pacotes, so fornece as rotas
     def __init__(
         self,
         endereco_virtual: str,
@@ -20,7 +21,7 @@ class GerenciadorRoteamento:
         self.tabela: dict[str, EntradaRota] = {} #chave end virtual destino
 
     def recalcular_rotas(self) -> None:
-        #(re)constrou o grafo, chama o dijkstra e atualiza tabela
+        #(re)constroi o grafo, chama o dijkstra e atualiza tabela
 
         #nao vou criar classe nodo nao
         #exemplo de como fica:
