@@ -1,0 +1,345 @@
+
+
+
+import asyncio
+from collections.abc import Callable
+import socket
+import time
+from typing import Any
+
+from config.config import Config
+from tfredes.logs import Logs
+from tfredes.lsdb import GerenciadorLSDB
+from tfredes.pacotes import (
+        PacDados, PacHello, PacICMP, PacLSP, PacRoteavel, Pacote,
+        TipoICMP, desserializar_pacote, serializar_pacote,
+    )
+from tfredes.roteamento import GerenciadorRoteamento
+from tfredes.trata_pacotes import Encaminhador, AcaoEncaminhamento, ResultadoEncaminhamento
+from tfredes.vizinhos import GerenciadorVizinhos
+from tfredes.estruturas import EntradaRota, PingPendente
+
+class Roteador:
+    def __init__(self, config: Config, logs: Logs):
+        self.config = config
+        self.logs = logs
+        self.gerenciador_vizinhos = GerenciadorVizinhos(config, logs)
+        self.gerenciador_lsdb = GerenciadorLSDB(config.virtual_ip, logs)
+        self.gerenciador_roteamento = GerenciadorRoteamento(config.virtual_ip, self.gerenciador_lsdb, logs)
+        self.encaminhador = Encaminhador(config.virtual_ip, self.gerenciador_roteamento, logs)
+        self.pings_pendentes: dict[int, PingPendente] = {}
+        self.pings_futuros: dict[int, asyncio.Future[tuple[PacICMP, float]]] = {}
+        self.proximo_id_pacote: int = 1
+        self.on_mensagem_recebida: Callable[[PacDados], None] | None = None
+        self.on_estado_alterado: Callable[[], None] | None = None
+
+        self.socket_udp = socket.socket(
+            socket.AF_INET,
+            socket.SOCK_DGRAM
+        )
+
+        self.socket_udp.setblocking(False)
+        self.socket_udp.bind(("0.0.0.0", config.udp_port))
+
+        self.sequencia_lsp: int = int(time.time())  
+
+
+    async def run(self):
+        self.gerar_novo_lsp()  # Gera o LSP inicial do roteador
+
+        tarefas_fundo = [
+                asyncio.create_task(self.receber_pacotes()),
+                asyncio.create_task(self.loop_hello()),
+                asyncio.create_task(self.loop_monitorar_vizinhos()),
+                asyncio.create_task(self.loop_envelhecimento_lsdb()),
+                asyncio.create_task(self.loop_renovacao_lsp()),
+            ]
+        try:
+            await self.interface_usuario()
+        finally:
+            for t in tarefas_fundo:
+                t.cancel()
+            await asyncio.gather(*tarefas_fundo, return_exceptions=True)
+            self.socket_udp.close()
+
+    async def interface_usuario(self):
+        from tfredes.tui import RoteadorApp
+
+        app = RoteadorApp(self)
+        await app.run_async()
+
+    def _notificar_estado(self) -> None:
+        if self.on_estado_alterado is not None:
+            self.on_estado_alterado()
+
+    def _novo_id_pacote(self) -> int:
+        id_pacote = self.proximo_id_pacote
+        self.proximo_id_pacote += 1
+        return id_pacote
+
+    def enviar_dados(self, destino: str, mensagem: str, ttl: int = 16) -> ResultadoEncaminhamento:
+        pacote = PacDados(
+            origem=self.config.virtual_ip,
+            destino=destino,
+            ttl=ttl,
+            id=self._novo_id_pacote(),
+            mensagem=mensagem,
+        )
+        res = self.encaminhador.preparar_pacote_originado(pacote)
+        self.exec_acao(res)
+        return res
+
+    async def enviar_ping(self, destino: str, ttl: int = 16, timeout: float = 2.0) -> dict[str, Any]:
+        id_pacote = self._novo_id_pacote()
+        pacote = PacICMP(
+            origem=self.config.virtual_ip,
+            destino=destino,
+            ttl=ttl,
+            id=id_pacote,
+            tipo=TipoICMP.ECHO_REQUEST,
+        )
+
+        loop = asyncio.get_running_loop()
+        futuro: asyncio.Future[tuple[PacICMP, float]] = loop.create_future()
+        self.pings_pendentes[id_pacote] = PingPendente(
+            id=id_pacote,
+            destino=destino,
+            horario_envio=time.monotonic(),
+        )
+        self.pings_futuros[id_pacote] = futuro
+
+        res = self.encaminhador.preparar_pacote_originado(pacote)
+        if res.acao in (AcaoEncaminhamento.DESTINO_INALCANCAVEL, AcaoEncaminhamento.DESCARTAR):
+            self.pings_pendentes.pop(id_pacote, None)
+            self.pings_futuros.pop(id_pacote, None)
+            self.exec_acao(res)
+            return {
+                "status": "sem_rota",
+                "observacoes": res.observacoes or "Sem rota para o destino.",
+            }
+
+        self.exec_acao(res)
+
+        try:
+            pac_resposta, rtt_ms = await asyncio.wait_for(futuro, timeout=timeout)
+            return {
+                "status": "resposta",
+                "pacote": pac_resposta,
+                "rtt_ms": rtt_ms,
+            }
+        except asyncio.TimeoutError:
+            self.pings_pendentes.pop(id_pacote, None)
+            self.pings_futuros.pop(id_pacote, None)
+            self.logs.criaLog(
+                "PING",
+                f"Timeout no ping para {destino} (id={id_pacote}, TTL={ttl})."
+            )
+            return {"status": "timeout"}
+
+    def recalcular_tabela(self) -> None:
+        self.gerenciador_roteamento.recalcular_rotas()
+        self._notificar_estado()
+
+    def enviar_pacote(self, pacote: Pacote, virtual_ip: str) -> None:
+            viz = self.gerenciador_vizinhos.obter_vizinho(virtual_ip)
+            if viz:
+                try:
+                    addr = (viz.ip, viz.porta)
+                    self.socket_udp.sendto(serializar_pacote(pacote), addr)
+                except Exception as e:
+                    self.logs.criaLog(
+                        "ERRO",
+                        f"Erro ao enviar pacote para {virtual_ip} ({addr[0]}:{addr[1]}): {e}"
+                    )
+            else:
+                self.logs.criaLog(
+                    "ERRO",
+                    f"Vizinho {virtual_ip} não encontrado na lista de vizinhos."
+                )
+
+    def gerar_lsp_proprio(self) -> PacLSP:
+        self.sequencia_lsp += 1
+        vizinhos_ativos = {
+            v.endereco_virtual: v.custo
+            for v in self.gerenciador_vizinhos.obter_vizinhos_ativos()
+        }
+        return PacLSP(
+            origem=self.config.virtual_ip,
+            sequencia=self.sequencia_lsp,
+            vizinhos=vizinhos_ativos,
+        )
+
+    def gerar_novo_lsp(self) -> None:
+        lsp = self.gerar_lsp_proprio()
+        self.gerenciador_lsdb.registrar_lsp_proprio(lsp)
+        self.recalcular_tabela()
+        self.inundar_lsp(lsp)
+
+    def inundar_lsp(self, lsp: PacLSP, excluir_endereco: tuple[str, int] | None = None) -> None:
+        for vizinho in self.gerenciador_vizinhos.obter_vizinhos_ativos():
+            if excluir_endereco is not None and (vizinho.ip, vizinho.porta) == excluir_endereco:
+                continue
+            self.enviar_pacote(lsp, vizinho.endereco_virtual)
+
+    async def receber_pacotes(self):
+
+        loop = asyncio.get_running_loop()
+
+        while True:
+            try:
+                dados, endereco = await loop.sock_recvfrom(
+                    self.socket_udp, 4096
+                )
+
+                self.processar_pacote(dados, endereco)
+            except Exception as e:
+                self.logs.criaLog(
+                    "ERRO",
+                    f"Erro ao receber pacote: {e}"
+                )
+                continue
+
+    def processar_pacote(self, dados: bytes, endereco: tuple[str, int]) -> None:
+        # B6: descarta pacotes de (IP, porta) fora da lista de vizinhos
+        if not self.gerenciador_vizinhos.endereco_eh_vizinho(endereco):
+            return
+
+        pacote = desserializar_pacote(dados)
+
+        if pacote is None:
+            self.logs.criaLog(
+                "ERRO",
+                f"Pacote malformado descartado de {endereco[0]}:{endereco[1]}."
+            )
+            return
+
+        if isinstance(pacote, PacHello):
+            if self.gerenciador_vizinhos.processar_hello(pacote.endereco_virtual, endereco):
+                self.gerar_novo_lsp()
+                for lsp in self.gerenciador_lsdb.obter_todos_lsps():
+                    if lsp.origem != self.config.virtual_ip:
+                        self.enviar_pacote(lsp, pacote.endereco_virtual)
+
+        elif isinstance(pacote, PacLSP):
+            if self.gerenciador_lsdb.processar_lsp(pacote):
+                self.recalcular_tabela()
+                self.inundar_lsp(pacote, excluir_endereco=endereco)
+
+        elif isinstance(pacote, PacRoteavel):
+            resultado = self.encaminhador.processar_pacote_recebido(pacote)
+            if resultado:
+                self.exec_acao(resultado)
+
+    def exec_acao(self, resultado: ResultadoEncaminhamento) -> None:
+        if resultado.acao == AcaoEncaminhamento.DESCARTAR:
+            self.logs.criaLog(
+                "DESCARTAR",
+                f"Pacote descartado. Observações: {resultado.observacoes}"
+            )
+        elif resultado.acao in (
+            AcaoEncaminhamento.ICMP_GERADO,
+            AcaoEncaminhamento.RESPOSTA_ECO,
+        ):
+            if isinstance(resultado.pacote, PacICMP):
+                if resultado.acao == AcaoEncaminhamento.RESPOSTA_ECO:
+                    self.logs.criaLog(
+                        "ICMP",
+                        f"Mensagem ICMP tipo {int(resultado.pacote.tipo)} gerada para {resultado.pacote.destino}."
+                    )
+                res_envio = self.encaminhador.preparar_pacote_originado(resultado.pacote)
+                self.exec_acao(res_envio)
+        elif resultado.acao == AcaoEncaminhamento.ENCAMINHAR:
+            if resultado.pacote and resultado.proximo_salto:
+                self.enviar_pacote(resultado.pacote, resultado.proximo_salto)
+        elif resultado.acao == AcaoEncaminhamento.RESULTADO_ICMP:
+            if isinstance(resultado.pacote, PacICMP):
+                pkg = resultado.pacote
+                tipo = TipoICMP(int(pkg.tipo))
+                pendente = self.pings_pendentes.pop(pkg.id, None)
+                rtt = (
+                    (time.monotonic() - pendente.horario_envio) * 1000
+                    if pendente is not None
+                    else 0.0
+                )
+
+                futuro = self.pings_futuros.pop(pkg.id, None)
+                if futuro is not None and not futuro.done():
+                    futuro.set_result((pkg, rtt))
+
+                if tipo == TipoICMP.ECHO_REPLY:
+                    if pendente is not None:
+                        self.logs.criaLog(
+                            "PING",
+                            f"Resposta de {pkg.origem}: id={pkg.id} ttl={pkg.ttl} tempo={rtt:.2f}ms"
+                        )
+                    else:
+                        self.logs.criaLog(
+                            "ICMP",
+                            f"ECHO_REPLY inesperado de {pkg.origem} (id={pkg.id})."
+                        )
+                elif tipo == TipoICMP.TEMPO_EXCEDIDO:
+                    self.logs.criaLog(
+                        "ICMP",
+                        f"Tempo excedido (TTL=0) reportado por {pkg.origem} (id={pkg.id})."
+                    )
+                elif tipo == TipoICMP.DESTINO_INACESSIVEL:
+                    self.logs.criaLog(
+                        "ICMP",
+                        f"Destino inacessível reportado por {pkg.origem} (id={pkg.id})."
+                    )
+        elif resultado.acao == AcaoEncaminhamento.DESTINO_INALCANCAVEL:
+            self.logs.criaLog(
+                "ICMP",
+                f"Destino inalcançável. Observações: {resultado.observacoes}"
+            )
+
+        elif resultado.acao == AcaoEncaminhamento.ENTREGA_DADOS:
+            if isinstance(resultado.pacote, PacDados):
+                self.logs.criaLog(
+                    "ENTREGA",
+                    f"Pacote entregue localmente. Origem: {resultado.pacote.origem}, Destino: {resultado.pacote.destino}. Mensagem: {resultado.pacote.mensagem}"
+                )
+                if self.on_mensagem_recebida is not None:
+                    self.on_mensagem_recebida(resultado.pacote)
+
+    async def loop_hello(self):
+        while True:
+
+            for vizinho in self.gerenciador_vizinhos.vizinhos.values():
+                pacote_hello = PacHello(endereco_virtual=self.config.virtual_ip) 
+                self.enviar_pacote(pacote_hello, vizinho.endereco_virtual)
+
+            await asyncio.sleep(5)
+
+    async def loop_monitorar_vizinhos(self):
+        while True:
+
+            inativos = self.gerenciador_vizinhos.verificar_timeouts()
+
+            if inativos:
+                self.gerar_novo_lsp()
+
+            await asyncio.sleep(1)
+
+    async def loop_envelhecimento_lsdb(self):
+
+        while True:
+
+            removidos = self.gerenciador_lsdb.remover_expirados()
+
+            if removidos:
+                self.recalcular_tabela()
+
+            await asyncio.sleep(1)
+
+    async def loop_renovacao_lsp(self):
+
+        while True:
+
+            await asyncio.sleep(30)
+
+            lsp = self.gerar_lsp_proprio()
+
+            self.gerenciador_lsdb.registrar_lsp_proprio(lsp)
+
+            self.inundar_lsp(lsp)
