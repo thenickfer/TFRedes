@@ -2,8 +2,10 @@
 
 
 import asyncio
+from collections.abc import Callable
 import socket
 import time
+from typing import Any
 
 from config.config import Config
 from tfredes.logs import Logs
@@ -26,7 +28,10 @@ class Roteador:
         self.gerenciador_roteamento = GerenciadorRoteamento(config.virtual_ip, self.gerenciador_lsdb, logs)
         self.encaminhador = Encaminhador(config.virtual_ip, self.gerenciador_roteamento, logs)
         self.pings_pendentes: dict[int, PingPendente] = {}
-        self.proximo_id_pacote: int = 1 
+        self.pings_futuros: dict[int, asyncio.Future[tuple[PacICMP, float]]] = {}
+        self.proximo_id_pacote: int = 1
+        self.on_mensagem_recebida: Callable[[PacDados], None] | None = None
+        self.on_estado_alterado: Callable[[], None] | None = None
 
         self.socket_udp = socket.socket(
             socket.AF_INET,
@@ -58,12 +63,82 @@ class Roteador:
             self.socket_udp.close()
 
     async def interface_usuario(self):
-        while True:
-            await asyncio.sleep(0.1)  # Pequena pausa para evitar uso excessivo de CPU
+        from tfredes.tui import RoteadorApp
 
+        app = RoteadorApp(self)
+        await app.run_async()
+
+    def _notificar_estado(self) -> None:
+        if self.on_estado_alterado is not None:
+            self.on_estado_alterado()
+
+    def _novo_id_pacote(self) -> int:
+        id_pacote = self.proximo_id_pacote
+        self.proximo_id_pacote += 1
+        return id_pacote
+
+    def enviar_dados(self, destino: str, mensagem: str, ttl: int = 16) -> ResultadoEncaminhamento:
+        pacote = PacDados(
+            origem=self.config.virtual_ip,
+            destino=destino,
+            ttl=ttl,
+            id=self._novo_id_pacote(),
+            mensagem=mensagem,
+        )
+        res = self.encaminhador.preparar_pacote_originado(pacote)
+        self.exec_acao(res)
+        return res
+
+    async def enviar_ping(self, destino: str, ttl: int = 16, timeout: float = 2.0) -> dict[str, Any]:
+        id_pacote = self._novo_id_pacote()
+        pacote = PacICMP(
+            origem=self.config.virtual_ip,
+            destino=destino,
+            ttl=ttl,
+            id=id_pacote,
+            tipo=TipoICMP.ECHO_REQUEST,
+        )
+
+        loop = asyncio.get_running_loop()
+        futuro: asyncio.Future[tuple[PacICMP, float]] = loop.create_future()
+        self.pings_pendentes[id_pacote] = PingPendente(
+            id=id_pacote,
+            destino=destino,
+            horario_envio=time.monotonic(),
+        )
+        self.pings_futuros[id_pacote] = futuro
+
+        res = self.encaminhador.preparar_pacote_originado(pacote)
+        if res.acao in (AcaoEncaminhamento.DESTINO_INALCANCAVEL, AcaoEncaminhamento.DESCARTAR):
+            self.pings_pendentes.pop(id_pacote, None)
+            self.pings_futuros.pop(id_pacote, None)
+            self.exec_acao(res)
+            return {
+                "status": "sem_rota",
+                "observacoes": res.observacoes or "Sem rota para o destino.",
+            }
+
+        self.exec_acao(res)
+
+        try:
+            pac_resposta, rtt_ms = await asyncio.wait_for(futuro, timeout=timeout)
+            return {
+                "status": "resposta",
+                "pacote": pac_resposta,
+                "rtt_ms": rtt_ms,
+            }
+        except asyncio.TimeoutError:
+            self.pings_pendentes.pop(id_pacote, None)
+            self.pings_futuros.pop(id_pacote, None)
+            self.logs.criaLog(
+                "PING",
+                f"Timeout no ping para {destino} (id={id_pacote}, TTL={ttl})."
+            )
+            return {"status": "timeout"}
 
     def recalcular_tabela(self) -> None:
         self.gerenciador_roteamento.recalcular_rotas()
+        self._notificar_estado()
 
     def enviar_pacote(self, pacote: Pacote, virtual_ip: str) -> None:
             viz = self.gerenciador_vizinhos.obter_vizinho(virtual_ip)
@@ -197,30 +272,35 @@ class Roteador:
             if isinstance(resultado.pacote, PacICMP):
                 pkg = resultado.pacote
                 tipo = TipoICMP(int(pkg.tipo))
+                pendente = self.pings_pendentes.pop(pkg.id, None)
+                rtt = (
+                    (time.monotonic() - pendente.horario_envio) * 1000
+                    if pendente is not None
+                    else 0.0
+                )
+
+                futuro = self.pings_futuros.pop(pkg.id, None)
+                if futuro is not None and not futuro.done():
+                    futuro.set_result((pkg, rtt))
 
                 if tipo == TipoICMP.ECHO_REPLY:
-                    pendente = self.pings_pendentes.pop(pkg.id, None)
                     if pendente is not None:
-                        rtt = (time.monotonic() - pendente.horario_envio) * 1000
-                        self.logs.criaLog(                                                                                                                           
-                        "PING",
-                        f"Resposta de {pkg.origem}: id={pkg.id} ttl={pkg.ttl} tempo={rtt:.2f}ms"                                                              
-                    )
+                        self.logs.criaLog(
+                            "PING",
+                            f"Resposta de {pkg.origem}: id={pkg.id} ttl={pkg.ttl} tempo={rtt:.2f}ms"
+                        )
                     else:
-                        self.logs.criaLog(                                                                                                                           
+                        self.logs.criaLog(
                             "ICMP",
                             f"ECHO_REPLY inesperado de {pkg.origem} (id={pkg.id})."
                         )
                 elif tipo == TipoICMP.TEMPO_EXCEDIDO:
-                    self.pings_pendentes.pop(pkg.id, None)                                                                                                           
-                    self.logs.criaLog(                                                                                                                               
+                    self.logs.criaLog(
                         "ICMP",
                         f"Tempo excedido (TTL=0) reportado por {pkg.origem} (id={pkg.id})."
                     )
-
-                elif tipo == TipoICMP.DESTINO_INACESSIVEL:                                                                                                           
-                    self.pings_pendentes.pop(pkg.id, None)                                                                                                           
-                    self.logs.criaLog(                                                                                                                               
+                elif tipo == TipoICMP.DESTINO_INACESSIVEL:
+                    self.logs.criaLog(
                         "ICMP",
                         f"Destino inacessível reportado por {pkg.origem} (id={pkg.id})."
                     )
@@ -234,8 +314,10 @@ class Roteador:
             if isinstance(resultado.pacote, PacDados):
                 self.logs.criaLog(
                     "ENTREGA",
-                    f"Pacote entregue localmente. Destino: {resultado.pacote.destino if resultado.pacote else 'N/A'}.\n Mensagem: {resultado.pacote.mensagem if resultado.pacote else 'N/A'}"
+                    f"Pacote entregue localmente. Origem: {resultado.pacote.origem}, Destino: {resultado.pacote.destino}. Mensagem: {resultado.pacote.mensagem}"
                 )
+                if self.on_mensagem_recebida is not None:
+                    self.on_mensagem_recebida(resultado.pacote)
 
     async def loop_hello(self):
         while True:
