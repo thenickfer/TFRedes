@@ -1,9 +1,9 @@
 
 import heapq
 
-from estruturas import EntradaRota
-from lsdb import GerenciadorLSDB
-from logs import Logs
+from tfredes.estruturas import EntradaRota
+from tfredes.lsdb import GerenciadorLSDB
+from tfredes.logs import Logs
 
 
 class GerenciadorRoteamento:

@@ -2,9 +2,9 @@
 from dataclasses import dataclass
 from enum import Enum
 
-from pacotes import Pacote, PacDados, PacICMP, PacRoteavel, TipoICMP
-from roteamento import GerenciadorRoteamento
-from logs import Logs
+from tfredes.pacotes import Pacote, PacDados, PacICMP, PacRoteavel, TipoICMP
+from tfredes.roteamento import GerenciadorRoteamento
+from tfredes.logs import Logs
 
 
 class AcaoEncaminhamento(Enum):
