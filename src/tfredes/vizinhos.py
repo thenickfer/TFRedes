@@ -1,8 +1,8 @@
 import time
 
 from config import Config
-from estruturas import EstadoVizinho
-from logs import Logs
+from tfredes.estruturas import EstadoVizinho
+from tfredes.logs import Logs
 
 INTERVALO_HELLO = 5 #para manar
 TIMEOUT_VIZINHO = 20 #para receber (hello)

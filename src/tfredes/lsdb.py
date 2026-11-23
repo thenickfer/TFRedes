@@ -1,9 +1,9 @@
 
 import time
 
-from pacotes import PacLSP
-from estruturas import EntradaLSDB
-from logs import Logs
+from tfredes.pacotes import PacLSP
+from tfredes.estruturas import EntradaLSDB
+from tfredes.logs import Logs
 
 TIMEOUT_LSP = 90
 

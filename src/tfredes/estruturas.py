@@ -1,7 +1,7 @@
 
 from dataclasses import dataclass
 
-from pacotes import PacLSP
+from tfredes.pacotes import PacLSP
 
 @dataclass
 class EstadoVizinho: #estado de um vizinho
