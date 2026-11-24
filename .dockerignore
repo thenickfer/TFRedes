@@ -18,4 +18,5 @@ dist/
 build/
 *.egg-info/
 tests/
+*.log
 .DS_Store

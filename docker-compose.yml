@@ -1,0 +1,56 @@
+x-router: &router
+  image: roteadortf:latest
+  build: .
+  stdin_open: true
+  tty: true
+  volumes:
+    - ./docker-config:/app/src/roteadores/r1
+  restart: unless-stopped
+
+services:
+  router1:
+    <<: *router
+    container_name: router1
+    command: ["r1"]
+    networks:
+      tfredes_net:
+        ipv4_address: 172.28.0.11
+
+  router2:
+    <<: *router
+    container_name: router2
+    command: ["r2"]
+    networks:
+      tfredes_net:
+        ipv4_address: 172.28.0.12
+
+  router3:
+    <<: *router
+    container_name: router3
+    command: ["r3"]
+    networks:
+      tfredes_net:
+        ipv4_address: 172.28.0.13
+
+  router4:
+    <<: *router
+    container_name: router4
+    command: ["r4"]
+    networks:
+      tfredes_net:
+        ipv4_address: 172.28.0.14
+
+  router5:
+    <<: *router
+    container_name: router5
+    command: ["r5"]
+    networks:
+      tfredes_net:
+        ipv4_address: 172.28.0.15
+
+networks:
+  tfredes_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24

@@ -1,14 +1,17 @@
-FROM python:3.13-slim
+FROM python:3.14-slim
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 WORKDIR /app
 
-COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-install-project
+ENV UV_PYTHON_DOWNLOADS=0 \
+    PATH="/app/.venv/bin:$PATH"
+
+COPY pyproject.toml uv.lock .python-version ./
+RUN uv sync --frozen --no-install-project --no-dev
 
 COPY . .
-RUN uv sync --frozen
+RUN uv sync --frozen --no-dev
 
-ENTRYPOINT ["uv", "run", "python", "-m", "myapp"]
-CMD ["8080"]
+ENTRYPOINT ["tfredes"]
+CMD ["r1"]
