@@ -12,9 +12,7 @@ services:
     <<: *router
     container_name: router1
     command: ["r1"]
-    networks:
-      tfredes_net:
-        ipv4_address: 172.28.0.11
+    network_mode: host
 
   router2:
     <<: *router
@@ -54,3 +52,4 @@ networks:
     ipam:
       config:
         - subnet: 172.28.0.0/24
+          gateway: 172.28.0.1
