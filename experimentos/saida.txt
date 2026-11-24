@@ -1,0 +1,179 @@
+=== E0: subida da rede (R1..R5) ===
+[t=  12.01s] R1 > vizinhos
+  10.5.2.1   127.0.0.1  6001
+  10.5.3.1   127.0.0.1  6002
+[t=  12.01s] R1 > lsdb
+  Origem       Sequência  Vizinhos e Custos
+  10.5.1.1    1795469003  10.5.2.1=2;10.5.3.1=5
+  10.5.2.1    1795469004  10.5.1.1=2;10.5.3.1=1;10.5.4.1=4
+  10.5.3.1    1795469005  10.5.1.1=5;10.5.2.1=1;10.5.4.1=2;10.5.5.1=6
+  10.5.4.1    1795469004  10.5.2.1=4;10.5.3.1=2;10.5.5.1=1
+  10.5.5.1    1795469003  10.5.3.1=6;10.5.4.1=1
+[t=  12.01s] R1 > tabela
+  Rede Destino  Próximo Salto  Custo
+  10.5.2.1      10.5.2.1           2
+  10.5.3.1      10.5.2.1           3
+  10.5.4.1      10.5.2.1           5
+  10.5.5.1      10.5.2.1           6
+[t=  12.01s] R2 > tabela
+  Rede Destino  Próximo Salto  Custo
+  10.5.1.1      10.5.1.1           2
+  10.5.3.1      10.5.3.1           1
+  10.5.4.1      10.5.3.1           3
+  10.5.5.1      10.5.3.1           4
+[t=  12.01s] R3 > tabela
+  Rede Destino  Próximo Salto  Custo
+  10.5.1.1      10.5.2.1           3
+  10.5.2.1      10.5.2.1           1
+  10.5.4.1      10.5.4.1           2
+  10.5.5.1      10.5.4.1           3
+[t=  12.01s] R4 > tabela
+  Rede Destino  Próximo Salto  Custo
+  10.5.1.1      10.5.3.1           5
+  10.5.2.1      10.5.3.1           3
+  10.5.3.1      10.5.3.1           2
+  10.5.5.1      10.5.5.1           1
+[t=  12.01s] R5 > tabela
+  Rede Destino  Próximo Salto  Custo
+  10.5.1.1      10.5.4.1           6
+  10.5.2.1      10.5.4.1           4
+  10.5.3.1      10.5.4.1           3
+  10.5.4.1      10.5.4.1           1
+
+=== E1: ping com TTL crescente R1 -> 10.5.5.1, msg, ping para rede inexistente ===
+[t=  12.01s] R1 > ping 10.5.5.1 1  ->  TEMPO EXCEDIDO de 10.5.2.1: id=1 ttl=16 RTT=0.61 ms
+[t=  12.01s] R1 > ping 10.5.5.1 2  ->  TEMPO EXCEDIDO de 10.5.3.1: id=2 ttl=15 RTT=0.52 ms
+[t=  12.01s] R1 > ping 10.5.5.1 3  ->  TEMPO EXCEDIDO de 10.5.4.1: id=3 ttl=14 RTT=0.56 ms
+[t=  12.01s] R1 > ping 10.5.5.1 4  ->  ECHO REPLY de 10.5.5.1: id=4 ttl=13 RTT=0.71 ms
+[t=  12.01s] R1 > ping 10.5.5.1 16  ->  ECHO REPLY de 10.5.5.1: id=5 ttl=13 RTT=0.64 ms
+[t=  12.01s] R1 > ping 10.5.5.50 16  ->  ECHO REPLY de 10.5.5.50: id=6 ttl=13 RTT=0.61 ms
+[t=  12.01s] R1 > msg 10.5.5.1 Oi pessoal  ->  encaminhar (proximo salto 10.5.2.1)
+[t=  12.32s] R1 > ping 10.5.9.1 16  ->  sem rota: Não existe rota para 10.5.9.1.
+
+=== E2: falha do enlace R3-R4 + perda de TODAS as copias do novo LSP de R3 em R2 ===
+[t=  12.32s] falha injetada
+[t=  30.04s] R3 detectou a queda do enlace 17.72s apos a falha
+[t=  31.54s] R2 > lsdb
+  Origem       Sequência  Vizinhos e Custos
+  10.5.1.1    1795469004  10.5.2.1=2;10.5.3.1=5
+  10.5.2.1    1795469005  10.5.1.1=2;10.5.3.1=1;10.5.4.1=4
+  10.5.3.1    1795469005  10.5.1.1=5;10.5.2.1=1;10.5.4.1=2;10.5.5.1=6
+  10.5.4.1    1795469006  10.5.2.1=4;10.5.5.1=1
+  10.5.5.1    1795469004  10.5.3.1=6;10.5.4.1=1
+[t=  31.54s] R2 > tabela
+  Rede Destino  Próximo Salto  Custo
+  10.5.1.1      10.5.1.1           2
+  10.5.3.1      10.5.3.1           1
+  10.5.4.1      10.5.3.1           3
+  10.5.5.1      10.5.3.1           4
+[t=  31.54s] R3 > lsdb
+  Origem       Sequência  Vizinhos e Custos
+  10.5.1.1    1795469004  10.5.2.1=2;10.5.3.1=5
+  10.5.2.1    1795469005  10.5.1.1=2;10.5.3.1=1;10.5.4.1=4
+  10.5.3.1    1795469007  10.5.1.1=5;10.5.2.1=1;10.5.5.1=6
+  10.5.4.1    1795469006  10.5.2.1=4;10.5.5.1=1
+  10.5.5.1    1795469004  10.5.3.1=6;10.5.4.1=1
+[t=  31.54s] R3 > tabela
+  Rede Destino  Próximo Salto  Custo
+  10.5.1.1      10.5.2.1           3
+  10.5.2.1      10.5.2.1           1
+  10.5.4.1      10.5.2.1           5
+  10.5.5.1      10.5.5.1           6
+[t=  31.54s] R1 > tabela
+  Rede Destino  Próximo Salto  Custo
+  10.5.2.1      10.5.2.1           2
+  10.5.3.1      10.5.2.1           3
+  10.5.4.1      10.5.2.1           6
+  10.5.5.1      10.5.2.1           7
+[t=  31.55s] R1 > ping 10.5.4.1 16  ->  TEMPO EXCEDIDO de 10.5.3.1: id=9 ttl=15 RTT=3.41 ms
+[t=  31.55s] perda de LSP em R2 encerrada (os proximos LSPs de R3 chegam normalmente)
+[t=  60.05s] R2 recuperou o LSP atual de R3 28.50s depois (renovacao periodica de 30 s)
+[t=  60.05s] R2 > tabela
+  Rede Destino  Próximo Salto  Custo
+  10.5.1.1      10.5.1.1           2
+  10.5.3.1      10.5.3.1           1
+  10.5.4.1      10.5.4.1           4
+  10.5.5.1      10.5.4.1           5
+[t=  60.05s] R1 > ping 10.5.4.1 16  ->  ECHO REPLY de 10.5.4.1: id=10 ttl=15 RTT=0.65 ms
+[t=  60.05s] enlace R3-R4 restaurado
+[t=  67.05s] R1 > tabela
+  Rede Destino  Próximo Salto  Custo
+  10.5.2.1      10.5.2.1           2
+  10.5.3.1      10.5.2.1           3
+  10.5.4.1      10.5.2.1           5
+  10.5.5.1      10.5.2.1           6
+
+=== E3: R4 reinicia numerando LSPs a partir de 0 (e sem o enlace para R5) ===
+[t=  67.05s] R1 > lsdb
+  Origem       Sequência  Vizinhos e Custos
+  10.5.1.1    1795469005  10.5.2.1=2;10.5.3.1=5
+  10.5.2.1    1795469006  10.5.1.1=2;10.5.3.1=1;10.5.4.1=4
+  10.5.3.1    1795469009  10.5.1.1=5;10.5.2.1=1;10.5.4.1=2;10.5.5.1=6
+  10.5.4.1    1795469008  10.5.2.1=4;10.5.3.1=2;10.5.5.1=1
+  10.5.5.1    1795469005  10.5.3.1=6;10.5.4.1=1
+[t=  67.05s] R4 encerrado
+[t=  69.05s] R4 reiniciado com sequencia inicial 0 e sem enlace com R5
+[t= 104.06s] R4 > lsdb
+  Origem       Sequência  Vizinhos e Custos
+  10.5.1.1    1795469006  10.5.2.1=2;10.5.3.1=5
+  10.5.2.1    1795469007  10.5.1.1=2;10.5.3.1=1;10.5.4.1=4
+  10.5.3.1    1795469010  10.5.1.1=5;10.5.2.1=1;10.5.4.1=2;10.5.5.1=6
+  10.5.4.1             4  10.5.2.1=4;10.5.3.1=2
+  10.5.5.1    1795469007  10.5.3.1=6
+[t= 104.06s] R1 > lsdb
+  Origem       Sequência  Vizinhos e Custos
+  10.5.1.1    1795469006  10.5.2.1=2;10.5.3.1=5
+  10.5.2.1    1795469007  10.5.1.1=2;10.5.3.1=1;10.5.4.1=4
+  10.5.3.1    1795469010  10.5.1.1=5;10.5.2.1=1;10.5.4.1=2;10.5.5.1=6
+  10.5.4.1    1795469008  10.5.2.1=4;10.5.3.1=2;10.5.5.1=1
+  10.5.5.1    1795469007  10.5.3.1=6
+[t= 104.06s] R1 > tabela
+  Rede Destino  Próximo Salto  Custo
+  10.5.2.1      10.5.2.1           2
+  10.5.3.1      10.5.2.1           3
+  10.5.4.1      10.5.2.1           5
+  10.5.5.1      10.5.2.1           6
+[t= 104.06s] R3 > tabela
+  Rede Destino  Próximo Salto  Custo
+  10.5.1.1      10.5.2.1           3
+  10.5.2.1      10.5.2.1           1
+  10.5.4.1      10.5.4.1           2
+  10.5.5.1      10.5.4.1           3
+[t= 104.06s] R4 > tabela
+  Rede Destino  Próximo Salto  Custo
+  10.5.1.1      10.5.3.1           5
+  10.5.2.1      10.5.3.1           3
+  10.5.3.1      10.5.3.1           2
+  10.5.5.1      10.5.3.1           8
+[t= 104.06s] R1 > ping 10.5.5.1 16  ->  TEMPO EXCEDIDO de 10.5.3.1: id=11 ttl=15 RTT=2.13 ms
+[t= 159.18s] R1 so aceitou um LSP 'novo' de R4 55.1s depois (apos o envelhecimento de 90 s do LSP antigo)
+[t= 159.18s] R1 > lsdb
+  Origem       Sequência  Vizinhos e Custos
+  10.5.1.1    1795469008  10.5.2.1=2;10.5.3.1=5
+  10.5.2.1    1795469009  10.5.1.1=2;10.5.3.1=1;10.5.4.1=4
+  10.5.3.1    1795469012  10.5.1.1=5;10.5.2.1=1;10.5.4.1=2;10.5.5.1=6
+  10.5.4.1             6  10.5.2.1=4;10.5.3.1=2
+  10.5.5.1    1795469009  10.5.3.1=6
+[t= 159.18s] R1 > tabela
+  Rede Destino  Próximo Salto  Custo
+  10.5.2.1      10.5.2.1           2
+  10.5.3.1      10.5.2.1           3
+  10.5.4.1      10.5.2.1           5
+  10.5.5.1      10.5.2.1           9
+[t= 159.18s] R1 > ping 10.5.5.1 16  ->  ECHO REPLY de 10.5.5.1: id=12 ttl=14 RTT=1.06 ms
+
+=== E3b (controle): mesmo reinicio, mas com sequencia inicial = Unix time (comportamento do codigo) ===
+[t= 165.06s] R1 aceitou o LSP do R4 reiniciado 3.88s apos o reinicio
+[t= 165.06s] R1 > lsdb
+  Origem       Sequência  Vizinhos e Custos
+  10.5.1.1    1795469008  10.5.2.1=2;10.5.3.1=5
+  10.5.2.1    1795469009  10.5.1.1=2;10.5.3.1=1;10.5.4.1=4
+  10.5.3.1    1795469012  10.5.1.1=5;10.5.2.1=1;10.5.4.1=2;10.5.5.1=6
+  10.5.4.1    1795469164  10.5.2.1=4;10.5.3.1=2
+  10.5.5.1    1795469009  10.5.3.1=6
+[t= 165.06s] R1 > tabela
+  Rede Destino  Próximo Salto  Custo
+  10.5.2.1      10.5.2.1           2
+  10.5.3.1      10.5.2.1           3
+  10.5.4.1      10.5.2.1           5
+  10.5.5.1      10.5.2.1           9
