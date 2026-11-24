@@ -24,6 +24,8 @@ uv sync
 
 ## Como Executar
 
+Obs.: Se quiser, eu gosto de [rodar pelo docker](#docker-compose)
+
 Você pode iniciar qualquer roteador informando apenas o **número do roteador** (`1` a `5`), o nome curto (`r1` a `r5`) ou o **caminho completo** para um arquivo YAML de configuração:
 
 ```bash
@@ -84,3 +86,18 @@ neighbors:               # Mapa de vizinhos diretos configurados
 | `ping <destino> [TTL]` | Envia um `ICMP Echo Request` (tipo 8) com o TTL indicado (padrão: `16`) e exibe a resposta (`Echo Reply`, `Tempo Excedido` ou `Destino Inacessível`), quem respondeu e o RTT, ou timeout após `2 s`. |
 | `limpar` / `Ctrl+L` | Limpa o console de comandos. |
 | `sair` / `Ctrl+Q` | Encerra o roteador de forma limpa. |
+
+
+## Docker Compose
+
+também é possível rodar pelo docker compose, a vantagem é que os containers usam uma subrede dentro do compose, cada um com seu próprio IP
+primeiro, build na imagem:
+```
+docker build -t roteadortf:latest .
+```
+
+depois só rodar:
+```
+docker compose up -d
+docker compose attach <routerN>
+```
