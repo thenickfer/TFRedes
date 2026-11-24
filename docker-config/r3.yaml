@@ -3,7 +3,7 @@ udp_port: 6002
 
 neighbors:
   10.5.1.1:
-    ip: "172.28.0.11"
+    ip: "172.28.0.1"
     port: 6000
     cost: 5
 
